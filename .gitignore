@@ -1,2 +1,13 @@
 *epoch*.pt
 data/*
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+*.egg-info/
+dist/
+build/
+.streamlit/secrets.toml
+.venv/
+venv/
+*.egg

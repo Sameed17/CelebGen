@@ -15,11 +15,6 @@ from torchvision import transforms as T
 from tqdm import tqdm
 import random
 
-
-# =============================
-# Config (edit here)
-# =============================
-
 DATA_DIR = "data"
 OUT_DIR = "checkpoints"
 IMAGE_SIZE = 256
@@ -35,10 +30,6 @@ EMA_BETA = 0.999
 GRAD_ACCUM_STEPS = 4
 # Resume training from checkpoints/ckpt_latest.pt if present
 RESUME_TRAINING = True
-# =============================
-# Data
-# =============================
-
 
 class FlatImageDataset(Dataset):
     def __init__(self, data_dir: str | Path, image_size: int):
@@ -69,12 +60,6 @@ class FlatImageDataset(Dataset):
     def __getitem__(self, idx: int) -> torch.Tensor:
         img = Image.open(self.paths[idx]).convert("RGB")
         return self.tfm(img)
-
-
-# =============================
-# Helpers
-# =============================
-
 
 def mkdirp(p: str | Path) -> Path:
     p = Path(p)
@@ -111,7 +96,7 @@ class EMA:
             ep.data.mul_(self.beta).add_(p.data, alpha=1.0 - self.beta)
 
 # =============================
-# U-Net backbone (64 -> 128 -> 256)
+# U-Net (64 -> 128 -> 256)
 # =============================
 
 
@@ -237,7 +222,7 @@ def linear_beta_schedule(T: int, beta_start: float = 1e-4, beta_end: float = 2e-
 
 def cosine_beta_schedule(T: int, s: float = 0.008) -> torch.Tensor:
     """
-    Cosine schedule from Nichol & Dhariwal (2021).
+    cosine noise schedule from Nichol & Dhariwal (2021).
     Returns betas in (0, 1) with length T.
     """
     steps = T + 1
