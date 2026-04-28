@@ -1,0 +1,10 @@
+Checkpoint: checkpoints\ckpt_latest.pt
+timesteps=50
+image_size=256
+Artifacts:
+- forward_steps.png (original + >=5 forward steps)
+- reverse_steps.png (>=5 reverse steps + final recon)
+- generated_images.png (>=5 generated images)
+- target_vs_reconstruction.png
+- loss_vs_epochs.png
+- metrics.txt (PSNR/SSIM)
