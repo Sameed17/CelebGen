@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,8 +24,6 @@ EPOCHS = 20
 NUM_WORKERS = 2
 SAVE_EVERY_EPOCHS = 1
 SUBSET_FRACTION = 0.1
-USE_EMA = True
-EMA_BETA = 0.999
 GRAD_ACCUM_STEPS = 4
 # Resume training from checkpoints/ckpt_latest.pt if present
 RESUME_TRAINING = True
@@ -49,8 +46,8 @@ class FlatImageDataset(Dataset):
         self.tfm = T.Compose(
             [
                 T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BICUBIC),
-                T.ToTensor(),  # [0, 1]
-                T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # [-1, 1]
+                T.ToTensor(),
+                T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
             ]
         )
 
@@ -84,16 +81,6 @@ def sinusoidal_time_embedding(timesteps: torch.Tensor, dim: int) -> torch.Tensor
     if dim % 2 == 1:
         emb = torch.cat([emb, torch.zeros((emb.shape[0], 1), device=device)], dim=1)
     return emb
-
-
-@dataclass(frozen=True)
-class EMA:
-    beta: float
-
-    @torch.no_grad()
-    def update(self, ema_model: nn.Module, model: nn.Module) -> None:
-        for ep, p in zip(ema_model.parameters(), model.parameters(), strict=True):
-            ep.data.mul_(self.beta).add_(p.data, alpha=1.0 - self.beta)
 
 # =============================
 # U-Net (64 -> 128 -> 256)
@@ -219,20 +206,6 @@ class UNet(nn.Module):
 def linear_beta_schedule(T: int, beta_start: float = 1e-4, beta_end: float = 2e-2) -> torch.Tensor:
     return torch.linspace(beta_start, beta_end, T, dtype=torch.float32)
 
-
-def cosine_beta_schedule(T: int, s: float = 0.008) -> torch.Tensor:
-    """
-    cosine noise schedule from Nichol & Dhariwal (2021).
-    Returns betas in (0, 1) with length T.
-    """
-    steps = T + 1
-    x = torch.linspace(0, T, steps, dtype=torch.float32)
-    alphas_cumprod = torch.cos(((x / T) + s) / (1 + s) * math.pi * 0.5) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1.0 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return betas.clamp(1e-8, 0.999)
-
-
 @dataclass
 class Schedule:
     betas: torch.Tensor
@@ -242,7 +215,7 @@ class Schedule:
 
 
 def make_schedule(T: int, device: torch.device) -> Schedule:
-    betas = cosine_beta_schedule(T).to(device)
+    betas = linear_beta_schedule(T).to(device)
     alphas = 1.0 - betas
     alphas_cumprod = torch.cumprod(alphas, dim=0)
     return Schedule(
@@ -267,12 +240,8 @@ class DDPMTrainer:
         noise = torch.randn_like(x0)
         xt = self.q_sample(x0, t, sch, noise)
         pred = self.model(xt, t)
-        # SNR weighting: w = snr / (snr + 1), snr = alpha_bar / (1 - alpha_bar)
-        alpha_bar_t = extract(sch.alphas_cumprod, t, x0.shape)
-        snr = alpha_bar_t / (1.0 - alpha_bar_t).clamp_min(1e-8)
-        weight = snr / (snr + 1.0)
         loss = (pred - noise) ** 2
-        return (weight * loss).mean()
+        return (loss).mean()
 
 
 def _load_latest_checkpoint(out_dir: Path, device: torch.device) -> dict | None:
@@ -298,7 +267,6 @@ def main() -> None:
         shuffle=True,
         num_workers=int(NUM_WORKERS),
         pin_memory=torch.cuda.is_available(),
-        drop_last=True,
     )
 
     model = UNet().to(device)
@@ -306,12 +274,6 @@ def main() -> None:
     sch = make_schedule(int(TIMESTEPS), device=device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=float(LR))
-
-    ema_model = None
-    ema = None
-    if bool(USE_EMA):
-        ema_model = deepcopy(model).eval().requires_grad_(False)
-        ema = EMA(beta=float(EMA_BETA))
 
     global_step = 0
     start_epoch = 1
@@ -327,9 +289,6 @@ def main() -> None:
             ckpt_timesteps = int(ckpt.get("timesteps", int(TIMESTEPS)))
             sch = make_schedule(ckpt_timesteps, device=device)
             trainer.timesteps = ckpt_timesteps
-
-            if ema_model is not None and ckpt.get("ema_model") is not None:
-                ema_model.load_state_dict(ckpt["ema_model"])
 
             print(f"Resuming from {out_dir / 'ckpt_latest.pt'} at epoch {start_epoch}/{EPOCHS}.")
 
@@ -353,9 +312,6 @@ def main() -> None:
                 opt.step()
                 opt.zero_grad(set_to_none=True)
 
-                if ema_model is not None and ema is not None:
-                    ema.update(ema_model, model)
-
                 global_step += 1
 
             loss_sum += float(loss.item())
@@ -367,9 +323,6 @@ def main() -> None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             opt.zero_grad(set_to_none=True)
-
-            if ema_model is not None and ema is not None:
-                ema.update(ema_model, model)
 
             global_step += 1
 
@@ -385,7 +338,6 @@ def main() -> None:
                 "timesteps": int(TIMESTEPS),
                 "image_size": int(IMAGE_SIZE),
                 "model": model.state_dict(),
-                "ema_model": ema_model.state_dict() if ema_model is not None else None,
                 "opt": opt.state_dict(),
                 "cfg": {
                     "data_dir": DATA_DIR,
@@ -398,8 +350,6 @@ def main() -> None:
                     "num_workers": NUM_WORKERS,
                     "save_every_epochs": SAVE_EVERY_EPOCHS,
                     "subset_fraction": SUBSET_FRACTION,
-                    "use_ema": USE_EMA,
-                    "ema_beta": EMA_BETA,
                 },
             }
             torch.save(ckpt, out_dir / "ckpt_latest.pt")

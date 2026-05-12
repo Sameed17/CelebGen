@@ -174,7 +174,6 @@ def load_model_from_ckpt(ckpt_path: Path, device: torch.device) -> tuple[torch.n
     timesteps = int(ckpt.get("timesteps", train.TIMESTEPS))
     image_size = int(ckpt.get("image_size", train.IMAGE_SIZE))
     model = train.UNet().to(device)
-    # state = ckpt.get("ema_model") or ckpt["model"]
     state = ckpt["model"]
     model.load_state_dict(state)
     model.eval()
