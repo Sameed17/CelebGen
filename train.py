@@ -25,7 +25,7 @@ NUM_WORKERS = 2
 SAVE_EVERY_EPOCHS = 1
 SUBSET_FRACTION = 0.1
 GRAD_ACCUM_STEPS = 4
-# Resume training from checkpoints/ckpt_latest.pt if present
+# resume training from checkpoints/ckpt_latest.pt if present
 RESUME_TRAINING = True
 
 class FlatImageDataset(Dataset):
@@ -82,24 +82,21 @@ def sinusoidal_time_embedding(timesteps: torch.Tensor, dim: int) -> torch.Tensor
         emb = torch.cat([emb, torch.zeros((emb.shape[0], 1), device=device)], dim=1)
     return emb
 
-# =============================
 # U-Net (64 -> 128 -> 256)
-# =============================
-
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, time_emb_dim: int):
         super().__init__()
         self.norm1 = nn.GroupNorm(8, in_ch)
         self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
-        self.time_mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, out_ch * 2)) # time embedding injected
+        self.time_mlp = nn.Linear(time_emb_dim, out_ch * 2) # time embedding injected
         self.norm2 = nn.GroupNorm(8, out_ch)
         self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
         self.res = nn.Identity() if in_ch == out_ch else nn.Conv2d(in_ch, out_ch, 1)
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         #silu after each norm layer
-        h = self.conv1(F.silu(self.norm1(x)))
+        h = F.silu(self.conv1(F.silu(self.norm1(x))))
         scale, shift = self.time_mlp(t_emb).chunk(2, dim=1)
         scale = scale.unsqueeze(-1).unsqueeze(-1)
         shift = shift.unsqueeze(-1).unsqueeze(-1)
@@ -197,12 +194,6 @@ class UNet(nn.Module):
         x = self.u1b(x, t_emb)
 
         return self.out(F.silu(self.out_norm(x)))
-
-
-# =============================
-# DDPM (train objective only)
-# =============================
-
 
 def linear_beta_schedule(T: int, beta_start: float = 1e-4, beta_end: float = 2e-2) -> torch.Tensor:
     return torch.linspace(beta_start, beta_end, T, dtype=torch.float32)
