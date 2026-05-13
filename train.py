@@ -92,12 +92,13 @@ class ResidualBlock(nn.Module):
         super().__init__()
         self.norm1 = nn.GroupNorm(8, in_ch)
         self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
-        self.time_mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, out_ch * 2))
+        self.time_mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, out_ch * 2)) # time embedding injected
         self.norm2 = nn.GroupNorm(8, out_ch)
         self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
         self.res = nn.Identity() if in_ch == out_ch else nn.Conv2d(in_ch, out_ch, 1)
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        #silu after each norm layer
         h = self.conv1(F.silu(self.norm1(x)))
         scale, shift = self.time_mlp(t_emb).chunk(2, dim=1)
         scale = scale.unsqueeze(-1).unsqueeze(-1)
